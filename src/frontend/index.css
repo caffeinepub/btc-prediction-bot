@@ -1,0 +1,210 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/fonts/JetBrainsMono[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/fonts/GeistMono[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/assets/fonts/BricolageGrotesque[opsz,wdth,wght].woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.25rem;
+
+    /* Terminal green on deep black */
+    --background: 0.10 0.008 155;
+    --foreground: 0.88 0.12 145;
+
+    --card: 0.13 0.01 155;
+    --card-foreground: 0.88 0.12 145;
+
+    --popover: 0.15 0.01 155;
+    --popover-foreground: 0.88 0.12 145;
+
+    --primary: 0.72 0.19 145;
+    --primary-foreground: 0.08 0.01 155;
+
+    --secondary: 0.18 0.015 155;
+    --secondary-foreground: 0.75 0.10 145;
+
+    --muted: 0.16 0.01 155;
+    --muted-foreground: 0.50 0.06 145;
+
+    --accent: 0.72 0.19 145;
+    --accent-foreground: 0.08 0.01 155;
+
+    --destructive: 0.64 0.23 22;
+    --destructive-foreground: 0.95 0 0;
+
+    --border: 0.25 0.025 145;
+    --input: 0.20 0.015 155;
+    --ring: 0.60 0.15 145;
+
+    /* Candle colors */
+    --candle-green: 0.70 0.22 145;
+    --candle-red: 0.62 0.22 22;
+    --candle-yellow: 0.80 0.18 90;
+
+    /* Glow effect */
+    --glow-green: oklch(0.72 0.19 145 / 0.3);
+    --glow-red: oklch(0.62 0.22 22 / 0.3);
+
+    --chart-1: 0.70 0.22 145;
+    --chart-2: 0.62 0.22 22;
+    --chart-3: 0.80 0.18 90;
+    --chart-4: 0.65 0.20 200;
+    --chart-5: 0.72 0.18 260;
+
+    --sidebar: 0.12 0.01 155;
+    --sidebar-foreground: 0.88 0.12 145;
+    --sidebar-primary: 0.72 0.19 145;
+    --sidebar-primary-foreground: 0.08 0.01 155;
+    --sidebar-accent: 0.18 0.015 155;
+    --sidebar-accent-foreground: 0.75 0.10 145;
+    --sidebar-border: 0.25 0.025 145;
+    --sidebar-ring: 0.60 0.15 145;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "JetBrains Mono", "Geist Mono", monospace;
+    background-image:
+      radial-gradient(ellipse at 20% 20%, oklch(0.20 0.04 145 / 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 80%, oklch(0.18 0.035 155 / 0.12) 0%, transparent 50%);
+    min-height: 100vh;
+  }
+
+  /* Scanline effect */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      oklch(0.0 0 0 / 0.03) 2px,
+      oklch(0.0 0 0 / 0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+}
+
+@layer utilities {
+  .text-green-glow {
+    color: oklch(var(--candle-green));
+    text-shadow: 0 0 10px oklch(var(--candle-green) / 0.6), 0 0 20px oklch(var(--candle-green) / 0.3);
+  }
+
+  .text-red-glow {
+    color: oklch(var(--candle-red));
+    text-shadow: 0 0 10px oklch(var(--candle-red) / 0.6), 0 0 20px oklch(var(--candle-red) / 0.3);
+  }
+
+  .text-yellow-glow {
+    color: oklch(var(--candle-yellow));
+    text-shadow: 0 0 10px oklch(var(--candle-yellow) / 0.5);
+  }
+
+  .border-glow-green {
+    border-color: oklch(var(--candle-green) / 0.5);
+    box-shadow: 0 0 8px oklch(var(--candle-green) / 0.2), inset 0 0 8px oklch(var(--candle-green) / 0.05);
+  }
+
+  .border-glow-red {
+    border-color: oklch(var(--candle-red) / 0.5);
+    box-shadow: 0 0 8px oklch(var(--candle-red) / 0.2), inset 0 0 8px oklch(var(--candle-red) / 0.05);
+  }
+
+  .terminal-card {
+    background: oklch(var(--card));
+    border: 1px solid oklch(var(--border));
+    box-shadow:
+      0 0 0 1px oklch(var(--candle-green) / 0.05),
+      0 4px 16px oklch(0 0 0 / 0.4),
+      inset 0 1px 0 oklch(var(--candle-green) / 0.08);
+  }
+
+  .terminal-card-active {
+    background: oklch(var(--card));
+    border: 1px solid oklch(var(--candle-green) / 0.4);
+    box-shadow:
+      0 0 12px oklch(var(--candle-green) / 0.15),
+      0 4px 16px oklch(0 0 0 / 0.4),
+      inset 0 1px 0 oklch(var(--candle-green) / 0.1);
+  }
+
+  .mono {
+    font-family: "JetBrains Mono", "Geist Mono", monospace;
+  }
+
+  .font-display {
+    font-family: "Bricolage Grotesque", sans-serif;
+  }
+
+  .pulse-green {
+    animation: pulseGreen 2s ease-in-out infinite;
+  }
+
+  @keyframes pulseGreen {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .ticker-blink {
+    animation: tickerBlink 1s step-end infinite;
+  }
+
+  @keyframes tickerBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .flame-bounce {
+    display: inline-block;
+    animation: flameBounce 0.6s ease-in-out infinite alternate;
+  }
+
+  @keyframes flameBounce {
+    from { transform: translateY(0) scale(1); }
+    to { transform: translateY(-2px) scale(1.1); }
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(oklch(var(--candle-green) / 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(var(--candle-green) / 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+}
