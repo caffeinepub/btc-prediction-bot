@@ -95,9 +95,10 @@ function computeSessionLossLimit(balance: number): number {
 const MAX_STREAK_LIMIT = 7;
 
 function getBetAmount(streak: number, balance: number): number | null {
-  if (streak < 3 || streak >= 6) return null;
+  if (streak < 3 || streak > 6) return null;
   const mult = computeBetMultiplier(balance);
-  const base = streak === 3 ? 100 : streak === 4 ? 300 : 900;
+  const base =
+    streak === 3 ? 100 : streak === 4 ? 300 : streak === 5 ? 900 : 2700;
   return Math.round(base * mult);
 }
 

@@ -90,9 +90,10 @@ function computeSessionLossLimit(balance: number): number {
 const MAX_STREAK_LIMIT = 7;
 
 function getNextBetAmount(streak: number, balance: number): number | null {
-  if (streak < 3 || streak >= 6) return null;
+  if (streak < 3 || streak > 6) return null;
   const mult = computeBetMultiplier(balance);
-  const base = streak === 3 ? 100 : streak === 4 ? 300 : 900;
+  const base =
+    streak === 3 ? 100 : streak === 4 ? 300 : streak === 5 ? 900 : 2700;
   return Math.round(base * mult);
 }
 
@@ -681,11 +682,12 @@ function SettingsPanel({
               <span>▲</span>
               <span>CONSECUTIVE GREEN → BET RED</span>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {[
                 { streak: 3, base: 100 },
                 { streak: 4, base: 300 },
                 { streak: 5, base: 900 },
+                { streak: 6, base: 2700 },
               ].map(({ streak, base }) => (
                 <div
                   key={streak}
@@ -711,11 +713,12 @@ function SettingsPanel({
               <span>▼</span>
               <span>CONSECUTIVE RED → BET GREEN</span>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {[
                 { streak: 3, base: 100 },
                 { streak: 4, base: 300 },
                 { streak: 5, base: 900 },
+                { streak: 6, base: 2700 },
               ].map(({ streak, base }) => (
                 <div
                   key={streak}
