@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -59,6 +60,207 @@ function formatUSD(cents: number): string {
     currency: "USD",
     minimumFractionDigits: 2,
   }).format(cents / 100);
+}
+
+/**
+ * Build the proxied URL for various CORS proxy services.
+ *
+ * Supported formats:
+ *   corsproxy.io          → https://corsproxy.io/?url=<encoded>
+ *   allorigins.win        → https://api.allorigins.win/raw?url=<encoded>
+ *   cors-anywhere style   → https://proxy.example.com/<target>
+ *   ?url= style (generic) → https://proxy.example.com/?url=<encoded>
+ */
+function buildProxiedUrl(proxyUrl: string, targetUrl: string): string {
+  const proxy = proxyUrl.trim().replace(/\/$/, "");
+  if (!proxy) return targetUrl;
+
+  // corsproxy.io — https://corsproxy.io/?url=<encoded>
+  if (proxy.includes("corsproxy.io")) {
+    const base = proxy.split("?")[0];
+    return `${base}/?url=${encodeURIComponent(targetUrl)}`;
+  }
+
+  // allorigins.win — https://api.allorigins.win/raw?url=<encoded>
+  if (proxy.includes("allorigins.win")) {
+    const base = proxy.includes("api.allorigins.win")
+      ? proxy.split("?")[0]
+      : "https://api.allorigins.win/raw";
+    return `${base}?url=${encodeURIComponent(targetUrl)}`;
+  }
+
+  // If proxy already contains ?url= pattern, just append encoded target
+  if (proxy.includes("?url=")) {
+    return `${proxy.split("?url=")[0]}?url=${encodeURIComponent(targetUrl)}`;
+  }
+
+  // Generic path-based proxy (e.g. cors-anywhere, local proxy)
+  return `${proxy}/${targetUrl}`;
+}
+
+/**
+ * Encode an ASN.1 TLV (tag + length + value) block.
+ */
+function asn1Tlv(tag: number, value: Uint8Array): Uint8Array {
+  const len = value.length;
+  let lengthBytes: Uint8Array;
+  if (len < 0x80) {
+    lengthBytes = new Uint8Array([len]);
+  } else if (len < 0x100) {
+    lengthBytes = new Uint8Array([0x81, len]);
+  } else if (len < 0x10000) {
+    lengthBytes = new Uint8Array([0x82, (len >> 8) & 0xff, len & 0xff]);
+  } else {
+    lengthBytes = new Uint8Array([
+      0x83,
+      (len >> 16) & 0xff,
+      (len >> 8) & 0xff,
+      len & 0xff,
+    ]);
+  }
+  const result = new Uint8Array(1 + lengthBytes.length + len);
+  result[0] = tag;
+  result.set(lengthBytes, 1);
+  result.set(value, 1 + lengthBytes.length);
+  return result;
+}
+
+function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  const total = arrays.reduce((acc, a) => acc + a.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const arr of arrays) {
+    out.set(arr, offset);
+    offset += arr.length;
+  }
+  return out;
+}
+
+/**
+ * Convert a PKCS#1 RSA private key DER buffer to PKCS#8 DER format.
+ * Web Crypto only natively supports PKCS#8, so PKCS#1 keys must be wrapped.
+ *
+ * PKCS#8 structure:
+ *   SEQUENCE {
+ *     INTEGER 0                            (version)
+ *     SEQUENCE { OID rsaEncryption, NULL } (algorithm)
+ *     OCTET STRING { <pkcs1-der> }         (privateKey)
+ *   }
+ */
+function pkcs1DerToPkcs8Der(pkcs1Der: Uint8Array): ArrayBuffer {
+  // RSA algorithm identifier: SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }
+  const rsaAlgorithmIdentifier = new Uint8Array([
+    0x30,
+    0x0d,
+    0x06,
+    0x09,
+    0x2a,
+    0x86,
+    0x48,
+    0x86,
+    0xf7,
+    0x0d,
+    0x01,
+    0x01,
+    0x01, // OID
+    0x05,
+    0x00, // NULL
+  ]);
+
+  const version = new Uint8Array([0x02, 0x01, 0x00]); // INTEGER 0
+  const privateKeyOctetString = asn1Tlv(0x04, pkcs1Der);
+
+  const inner = concatBytes(
+    version,
+    rsaAlgorithmIdentifier,
+    privateKeyOctetString,
+  );
+  const pkcs8 = asn1Tlv(0x30, inner);
+
+  return pkcs8.buffer as ArrayBuffer;
+}
+
+/**
+ * Sign a Kalshi API request using RSA-SHA256 (PKCS#1 v1.5).
+ * Kalshi requires: `KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-TIMESTAMP`, `KALSHI-ACCESS-SIGNATURE`.
+ * Supports both PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) and
+ * PKCS#8 (-----BEGIN PRIVATE KEY-----) PEM formats.
+ */
+async function buildKalshiHeaders(
+  apiKeyId: string,
+  rsaPem: string,
+  method: string,
+  path: string,
+): Promise<Record<string, string>> {
+  const timestampMs = Date.now();
+
+  // Import the RSA private key
+  let cryptoKey: CryptoKey;
+  try {
+    // Normalise the PEM: trim whitespace, normalise line endings
+    const pemNorm = rsaPem.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+    // Detect key type from the PEM header
+    const isPkcs1 = pemNorm.includes("BEGIN RSA PRIVATE KEY");
+    const isPkcs8 = pemNorm.includes("BEGIN PRIVATE KEY");
+
+    if (!isPkcs1 && !isPkcs8) {
+      throw new Error(
+        "Unrecognised PEM header. Expected -----BEGIN RSA PRIVATE KEY----- (PKCS#1) or -----BEGIN PRIVATE KEY----- (PKCS#8).",
+      );
+    }
+
+    // Strip PEM headers/footers and decode base64
+    const pemClean = pemNorm
+      .replace(/-----BEGIN [^-]+-----/g, "")
+      .replace(/-----END [^-]+-----/g, "")
+      .replace(/\s+/g, "");
+
+    let derBytes: Uint8Array;
+    try {
+      derBytes = Uint8Array.from(atob(pemClean), (c) => c.charCodeAt(0));
+    } catch {
+      throw new Error(
+        "Base64 decode failed — the PEM body contains invalid characters. Make sure you copied the full unmodified key.",
+      );
+    }
+
+    // Web Crypto only supports PKCS#8 natively.
+    // If the key is PKCS#1, wrap it in a PKCS#8 envelope first.
+    const keyBuffer = isPkcs1
+      ? pkcs1DerToPkcs8Der(derBytes)
+      : (derBytes.buffer as ArrayBuffer);
+
+    cryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      keyBuffer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`Failed to import RSA private key. ${detail}`);
+  }
+
+  // Message to sign: timestamp_ms (as string) + method (uppercase) + path
+  const message = `${timestampMs}${method.toUpperCase()}${path}`;
+  const encoder = new TextEncoder();
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    encoder.encode(message),
+  );
+
+  // Base64-encode the signature
+  const sigBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+
+  return {
+    "Content-Type": "application/json",
+    "KALSHI-ACCESS-KEY": apiKeyId,
+    "KALSHI-ACCESS-TIMESTAMP": String(timestampMs),
+    "KALSHI-ACCESS-SIGNATURE": sigBase64,
+  };
 }
 
 // Sample markets shown when API is unreachable due to CORS
@@ -170,6 +372,7 @@ export default function KalshiPanel() {
   const {
     apiKey,
     apiEmail,
+    rsaPrivateKey,
     proxyUrl,
     liveEnabled,
     selectedMarket,
@@ -183,8 +386,10 @@ export default function KalshiPanel() {
   // Local form state
   const [keyInput, setKeyInput] = useState("");
   const [emailInput, setEmailInput] = useState("");
+  const [rsaKeyInput, setRsaKeyInput] = useState("");
   const [proxyInput, setProxyInput] = useState(() => proxyUrl);
   const [showKey, setShowKey] = useState(false);
+  const [showRsaKey, setShowRsaKey] = useState(false);
 
   // Connection state
   const [connStatus, setConnStatus] = useState<ConnectionStatus>("idle");
@@ -197,28 +402,27 @@ export default function KalshiPanel() {
   const [marketsFromSample, setMarketsFromSample] = useState(false);
 
   const hasCredentials = apiKey.length > 0;
-
-  /** Build the full URL, optionally routing through a CORS proxy. */
-  function buildUrl(targetUrl: string): string {
-    const proxy = proxyUrl.trim();
-    if (!proxy) return targetUrl;
-    // Standard CORS-proxy convention: proxy/<target>
-    return `${proxy.replace(/\/$/, "")}/${targetUrl}`;
-  }
+  const hasRsaKey = rsaPrivateKey.length > 0;
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   function handleSaveCredentials() {
     if (!keyInput.trim()) {
-      toast.error("API Key is required");
+      toast.error("API Key ID is required");
       return;
     }
     if (!emailInput.trim()) {
       toast.error("Email is required");
       return;
     }
-    setCredentials(keyInput.trim(), emailInput.trim());
+    if (!rsaKeyInput.trim()) {
+      toast.error("RSA Private Key is required");
+      return;
+    }
+    setCredentials(keyInput.trim(), emailInput.trim(), rsaKeyInput.trim());
     setKeyInput("");
+    setEmailInput("");
+    setRsaKeyInput("");
     toast.success("Credentials saved to localStorage");
   }
 
@@ -237,23 +441,30 @@ export default function KalshiPanel() {
       toast.error("Save credentials first");
       return;
     }
+    if (!hasRsaKey) {
+      toast.error("RSA private key is required for authentication");
+      return;
+    }
     setConnStatus("testing");
     setConnMessage("");
     setConnBalance(null);
 
+    const targetPath = "/trade-api/v2/portfolio/balance";
+    const targetUrl = `https://trading-api.kalshi.com${targetPath}`;
+    const finalUrl = buildProxiedUrl(proxyUrl, targetUrl);
+
     try {
-      const res = await fetch(
-        buildUrl(
-          "https://trading-api.kalshi.com/trade-api/v2/portfolio/balance",
-        ),
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-        },
+      const headers = await buildKalshiHeaders(
+        apiKey,
+        rsaPrivateKey,
+        "GET",
+        targetPath,
       );
+
+      const res = await fetch(finalUrl, {
+        method: "GET",
+        headers,
+      });
 
       if (res.ok) {
         const data = await res.json();
@@ -265,18 +476,44 @@ export default function KalshiPanel() {
         toast.success("Connected to Kalshi successfully");
       } else if (res.status === 401) {
         setConnStatus("error");
-        setConnMessage("Invalid API credentials (401 Unauthorized)");
+        setConnMessage(
+          "Invalid API credentials (401 Unauthorized) — double-check your API Key ID and that the RSA private key matches the key registered on Kalshi.",
+        );
         toast.error("Invalid Kalshi API credentials");
-      } else {
+      } else if (res.status === 403) {
         setConnStatus("error");
-        setConnMessage(`API returned status ${res.status}`);
+        setConnMessage(
+          "Access forbidden (403) — your API key may not have trading permissions enabled on Kalshi.",
+        );
+        toast.error("Kalshi access forbidden (403)");
+      } else {
+        const body = await res.text().catch(() => "");
+        setConnStatus("error");
+        setConnMessage(
+          `API returned status ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
+        );
         toast.error(`Kalshi API error: ${res.status}`);
       }
-    } catch (_err) {
-      setConnStatus("error");
-      setConnMessage(
-        "Network request blocked — Kalshi's API may restrict direct browser access (CORS). Your credentials are saved and will work when this app runs in a server environment.",
-      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("RSA") ||
+        msg.includes("import") ||
+        msg.includes("key")
+      ) {
+        setConnStatus("error");
+        setConnMessage(
+          `RSA key error: ${msg}. Make sure you paste the full PEM block including the -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines.`,
+        );
+      } else {
+        const isProxySet = proxyUrl.trim().length > 0;
+        setConnStatus("error");
+        setConnMessage(
+          isProxySet
+            ? `Network request blocked through proxy (${proxyUrl.trim()}). Most free CORS proxies strip custom auth headers required by Kalshi. For reliable access, run a local proxy: install Node.js, then run: npx local-cors-proxy --proxyUrl https://trading-api.kalshi.com --port 8010 — then set your proxy URL to http://localhost:8010/proxy. Your credentials are saved correctly.`
+            : "Network request blocked — Kalshi's API does not allow direct browser requests (CORS). Set the proxy URL field to https://corsproxy.io and try again. If that still fails, a local proxy gives the most reliable access.",
+        );
+      }
     }
   }
 
@@ -288,19 +525,20 @@ export default function KalshiPanel() {
     setMarketsLoading(true);
     setMarketsFromSample(false);
 
+    const targetPath =
+      "/trade-api/v2/markets?limit=20&status=open&series_ticker=KXBTC";
+    const targetUrl = `https://trading-api.kalshi.com${targetPath}`;
+    const finalUrl = buildProxiedUrl(proxyUrl, targetUrl);
+
     try {
-      const res = await fetch(
-        buildUrl(
-          "https://trading-api.kalshi.com/trade-api/v2/markets?limit=20&status=open&series_ticker=KXBTC",
-        ),
-        {
-          method: "GET",
-          headers: {
+      const headers = hasRsaKey
+        ? await buildKalshiHeaders(apiKey, rsaPrivateKey, "GET", targetPath)
+        : {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-          },
-        },
-      );
+          };
+
+      const res = await fetch(finalUrl, { method: "GET", headers });
 
       if (res.ok) {
         const data = await res.json();
@@ -417,7 +655,7 @@ export default function KalshiPanel() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <span className="mono text-xs text-muted-foreground w-14">
-                    KEY
+                    KEY ID
                   </span>
                   <span className="mono text-xs text-foreground flex-1 truncate">
                     {maskKey(apiKey)}
@@ -429,6 +667,18 @@ export default function KalshiPanel() {
                   </span>
                   <span className="mono text-xs text-foreground flex-1 truncate">
                     {apiEmail}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="mono text-xs text-muted-foreground w-14">
+                    RSA KEY
+                  </span>
+                  <span
+                    className={`mono text-xs flex-1 ${hasRsaKey ? "text-candle-green" : "text-candle-red"}`}
+                  >
+                    {hasRsaKey
+                      ? `Saved (${rsaPrivateKey.length} chars)`
+                      : "NOT SET"}
                   </span>
                 </div>
               </div>
@@ -445,14 +695,28 @@ export default function KalshiPanel() {
                 value={proxyInput}
                 onChange={(e) => setProxyInput(e.target.value)}
                 onBlur={() => setProxyUrl(proxyInput)}
-                placeholder="https://your-proxy.example.com"
+                placeholder="https://corsproxy.io"
                 className="mono bg-secondary/50 border-border text-foreground text-xs"
                 autoComplete="off"
                 data-ocid="kalshi.proxy_url.input"
               />
               <p className="mono text-xs text-muted-foreground/70 leading-relaxed">
-                Requests will be routed through this URL to bypass browser CORS
-                restrictions. Leave blank to call Kalshi directly.
+                Free options:{" "}
+                <span className="text-candle-yellow">https://corsproxy.io</span>{" "}
+                or{" "}
+                <span className="text-candle-yellow">
+                  https://api.allorigins.win/raw
+                </span>
+                . For best results use a local proxy:{" "}
+                <span className="text-candle-yellow">
+                  http://localhost:8010/proxy
+                </span>{" "}
+                (run{" "}
+                <span className="text-candle-green">
+                  npx local-cors-proxy --proxyUrl https://trading-api.kalshi.com
+                  --port 8010
+                </span>
+                ).
               </p>
               {proxyUrl && (
                 <div className="flex items-center gap-2 rounded border border-candle-yellow/25 bg-candle-yellow/5 px-3 py-2 mt-1">
@@ -469,6 +733,7 @@ export default function KalshiPanel() {
               variant="outline"
               size="sm"
               className="mono text-xs border-candle-red/30 text-candle-red hover:bg-candle-red/10 bg-candle-red/5"
+              data-ocid="kalshi.credentials.clear_button"
             >
               <Unplug className="w-3.5 h-3.5 mr-1.5" />
               CLEAR CREDENTIALS
@@ -480,19 +745,20 @@ export default function KalshiPanel() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="mono text-xs text-muted-foreground tracking-widest uppercase">
-                  API Key
+                  API Key ID
                 </Label>
                 <div className="relative">
                   <Input
                     type={showKey ? "text" : "password"}
                     value={keyInput}
                     onChange={(e) => setKeyInput(e.target.value)}
-                    placeholder="your-kalshi-api-key"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     className="mono bg-secondary/50 border-border text-foreground pr-10 text-xs"
                     onKeyDown={(e) =>
                       e.key === "Enter" && handleSaveCredentials()
                     }
                     autoComplete="off"
+                    data-ocid="kalshi.api_key.input"
                   />
                   <button
                     type="button"
@@ -507,6 +773,9 @@ export default function KalshiPanel() {
                     )}
                   </button>
                 </div>
+                <p className="mono text-xs text-muted-foreground/60">
+                  The Key ID (UUID) from your Kalshi API settings
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -523,8 +792,62 @@ export default function KalshiPanel() {
                     e.key === "Enter" && handleSaveCredentials()
                   }
                   autoComplete="email"
+                  data-ocid="kalshi.email.input"
                 />
               </div>
+            </div>
+
+            {/* RSA Private Key — full width textarea */}
+            <div className="space-y-2">
+              <Label className="mono text-xs text-muted-foreground tracking-widest uppercase">
+                RSA Private Key
+              </Label>
+              <div className="relative">
+                <Textarea
+                  value={
+                    showRsaKey
+                      ? rsaKeyInput
+                      : rsaKeyInput
+                        ? "•".repeat(Math.min(rsaKeyInput.length, 40))
+                        : ""
+                  }
+                  onChange={(e) => {
+                    if (showRsaKey) setRsaKeyInput(e.target.value);
+                  }}
+                  onFocus={() => setShowRsaKey(true)}
+                  placeholder={
+                    "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+                  }
+                  className="mono bg-secondary/50 border-border text-foreground text-xs font-mono h-28 resize-none"
+                  autoComplete="off"
+                  spellCheck={false}
+                  data-ocid="kalshi.rsa_key.textarea"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRsaKey((s) => !s)}
+                  className="absolute right-3 top-3 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={showRsaKey ? "Hide RSA key" : "Show RSA key"}
+                >
+                  {showRsaKey ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+              <p className="mono text-xs text-muted-foreground/70 leading-relaxed">
+                Paste your full RSA private key PEM — include the{" "}
+                <span className="text-candle-yellow">
+                  -----BEGIN PRIVATE KEY-----
+                </span>{" "}
+                and{" "}
+                <span className="text-candle-yellow">
+                  -----END PRIVATE KEY-----
+                </span>{" "}
+                lines. Stored locally, never transmitted to any server other
+                than Kalshi.
+              </p>
             </div>
 
             {/* Proxy URL — full width */}
@@ -538,14 +861,23 @@ export default function KalshiPanel() {
                 value={proxyInput}
                 onChange={(e) => setProxyInput(e.target.value)}
                 onBlur={() => setProxyUrl(proxyInput)}
-                placeholder="https://your-proxy.example.com"
+                placeholder="https://corsproxy.io"
                 className="mono bg-secondary/50 border-border text-foreground text-xs"
                 autoComplete="off"
                 data-ocid="kalshi.proxy_url.input"
               />
               <p className="mono text-xs text-muted-foreground/70 leading-relaxed">
-                Requests will be routed through this URL to bypass browser CORS
-                restrictions. Leave blank to call Kalshi directly.
+                Free options:{" "}
+                <span className="text-candle-yellow">https://corsproxy.io</span>{" "}
+                or{" "}
+                <span className="text-candle-yellow">
+                  https://api.allorigins.win/raw
+                </span>
+                . Local proxy (most reliable):{" "}
+                <span className="text-candle-yellow">
+                  http://localhost:8010/proxy
+                </span>
+                .
               </p>
             </div>
 
@@ -588,6 +920,7 @@ export default function KalshiPanel() {
             size="sm"
             variant="outline"
             className="mono text-xs border-candle-yellow/30 text-candle-yellow hover:bg-candle-yellow/10 bg-candle-yellow/5 disabled:opacity-40"
+            data-ocid="kalshi.test_connection.button"
           >
             {connStatus === "testing" ? (
               <>
@@ -614,6 +947,11 @@ export default function KalshiPanel() {
                     ? "border-candle-green/30 bg-candle-green/5"
                     : "border-candle-red/30 bg-candle-red/5"
                 }`}
+                data-ocid={
+                  connStatus === "connected"
+                    ? "kalshi.connection.success_state"
+                    : "kalshi.connection.error_state"
+                }
               >
                 {connStatus === "connected" ? (
                   <div className="flex items-center gap-2">
@@ -640,9 +978,8 @@ export default function KalshiPanel() {
                         {connMessage}
                       </p>
                       <p className="mono text-xs text-candle-yellow/80 mt-2 leading-relaxed">
-                        Your credentials are saved and will work when this app
-                        runs in a server environment. You can still configure
-                        markets and strategy below.
+                        Your credentials are saved. Configure markets and
+                        strategy below.
                       </p>
                     </div>
                   </div>
@@ -681,6 +1018,7 @@ export default function KalshiPanel() {
               disabled={!hasCredentials}
               className="data-[state=checked]:bg-candle-red/80"
               aria-label="Enable live Kalshi trading"
+              data-ocid="kalshi.live_trading.switch"
             />
           </div>
 
@@ -750,6 +1088,7 @@ export default function KalshiPanel() {
             size="sm"
             variant="outline"
             className="mono text-xs border-candle-green/30 text-candle-green hover:bg-candle-green/10 bg-candle-green/5 disabled:opacity-40"
+            data-ocid="kalshi.markets.refresh_button"
           >
             {marketsLoading ? (
               <>

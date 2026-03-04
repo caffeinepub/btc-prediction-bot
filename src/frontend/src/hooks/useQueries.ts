@@ -129,10 +129,11 @@ export function useRefreshAll() {
 export interface KalshiConfig {
   apiKey: string;
   apiEmail: string;
+  rsaPrivateKey: string;
   proxyUrl: string;
   liveEnabled: boolean;
   selectedMarket: string;
-  setCredentials: (key: string, email: string) => void;
+  setCredentials: (key: string, email: string, rsaKey: string) => void;
   clearCredentials: () => void;
   setLiveEnabled: (enabled: boolean) => void;
   setSelectedMarket: (ticker: string) => void;
@@ -146,6 +147,9 @@ export function useKalshiConfig(): KalshiConfig {
   const [apiEmail, setApiEmail] = useState<string>(
     () => localStorage.getItem("kalshi_api_email") ?? "",
   );
+  const [rsaPrivateKey, setRsaPrivateKey] = useState<string>(
+    () => localStorage.getItem("kalshi_rsa_private_key") ?? "",
+  );
   const [proxyUrl, setProxyUrlState] = useState<string>(
     () => localStorage.getItem("kalshi_proxy_url") ?? "",
   );
@@ -156,20 +160,27 @@ export function useKalshiConfig(): KalshiConfig {
     () => localStorage.getItem("kalshi_selected_market") ?? "",
   );
 
-  const setCredentials = useCallback((key: string, email: string) => {
-    localStorage.setItem("kalshi_api_key", key);
-    localStorage.setItem("kalshi_api_email", email);
-    setApiKey(key);
-    setApiEmail(email);
-  }, []);
+  const setCredentials = useCallback(
+    (key: string, email: string, rsaKey: string) => {
+      localStorage.setItem("kalshi_api_key", key);
+      localStorage.setItem("kalshi_api_email", email);
+      localStorage.setItem("kalshi_rsa_private_key", rsaKey);
+      setApiKey(key);
+      setApiEmail(email);
+      setRsaPrivateKey(rsaKey);
+    },
+    [],
+  );
 
   const clearCredentials = useCallback(() => {
     localStorage.removeItem("kalshi_api_key");
     localStorage.removeItem("kalshi_api_email");
+    localStorage.removeItem("kalshi_rsa_private_key");
     localStorage.removeItem("kalshi_live_trading_enabled");
     localStorage.removeItem("kalshi_selected_market");
     setApiKey("");
     setApiEmail("");
+    setRsaPrivateKey("");
     setLiveEnabledState(false);
     setSelectedMarketState("");
   }, []);
@@ -200,6 +211,7 @@ export function useKalshiConfig(): KalshiConfig {
   return {
     apiKey,
     apiEmail,
+    rsaPrivateKey,
     proxyUrl,
     liveEnabled,
     selectedMarket,
