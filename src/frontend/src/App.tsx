@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -17,6 +18,7 @@ import {
   BarChart2,
   ChevronDown,
   ChevronUp,
+  Clock,
   DollarSign,
   FlaskConical,
   Link2,
@@ -49,6 +51,10 @@ import {
   useRefreshAll,
   useSetStartingBalance,
 } from "./hooks/useQueries";
+
+// ─── Candle Delay Constants ───────────────────────────────────────────────────
+/** How long (ms) to delay betting after a new candle opens */
+const CANDLE_OPEN_DELAY_MS = 30_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -339,9 +345,17 @@ interface BetPreviewProps {
   greenStreak: number;
   redStreak: number;
   balance: number;
+  delayActive: boolean;
+  delaySecondsLeft: number;
 }
 
-function NextBetPreview({ greenStreak, redStreak, balance }: BetPreviewProps) {
+function NextBetPreview({
+  greenStreak,
+  redStreak,
+  balance,
+  delayActive,
+  delaySecondsLeft,
+}: BetPreviewProps) {
   const greenBetAmount = getNextBetAmount(greenStreak, balance);
   const redBetAmount = getNextBetAmount(redStreak, balance);
 
@@ -356,34 +370,77 @@ function NextBetPreview({ greenStreak, redStreak, balance }: BetPreviewProps) {
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
           transition={{ duration: 0.3 }}
-          className="terminal-card-active rounded-lg p-4 border relative overflow-hidden"
+          className={`rounded-lg p-4 border relative overflow-hidden ${delayActive ? "opacity-70" : "terminal-card-active"}`}
+          style={
+            delayActive
+              ? {
+                  background: "oklch(var(--card))",
+                  borderColor: "oklch(0.85 0.18 85 / 0.35)",
+                  boxShadow:
+                    "0 0 12px oklch(0.85 0.18 85 / 0.08), 0 4px 16px oklch(0 0 0 / 0.4)",
+                }
+              : undefined
+          }
         >
-          {/* Corner brackets — green */}
-          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-candle-green/80" />
-          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-candle-green/80" />
-          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-candle-green/80" />
-          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-candle-green/80" />
+          {/* Corner brackets — green/yellow depending on delay state */}
+          <div
+            className={`absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-green/80"}`}
+          />
+          <div
+            className={`absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-green/80"}`}
+          />
+          <div
+            className={`absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-green/80"}`}
+          />
+          <div
+            className={`absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-green/80"}`}
+          />
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-candle-yellow" />
-              <span className="mono text-xs text-muted-foreground tracking-widest uppercase">
-                NEXT BET QUEUED
-              </span>
-            </div>
+          {delayActive ? (
+            /* Delayed state */
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-green-glow mono text-xl font-bold">
-                {formatCurrency(greenBetAmount)}
-              </span>
-              <span className="mono text-xs text-muted-foreground">ON</span>
-              <span className="text-red-glow mono font-bold tracking-widest">
-                ▼ RED
-              </span>
-              <span className="mono text-xs text-muted-foreground">
-                ({greenStreak} consecutive green)
-              </span>
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-candle-yellow ticker-blink" />
+                <span className="mono text-xs text-candle-yellow tracking-widest uppercase">
+                  BET QUEUED · WAITING {delaySecondsLeft}s
+                </span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap opacity-60">
+                <span className="mono text-xl font-bold text-candle-yellow">
+                  {formatCurrency(greenBetAmount)}
+                </span>
+                <span className="mono text-xs text-muted-foreground">ON</span>
+                <span className="text-red-glow mono font-bold tracking-widest">
+                  ▼ RED
+                </span>
+                <span className="mono text-xs text-muted-foreground">
+                  ({greenStreak} consecutive green)
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Normal state */
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-candle-yellow" />
+                <span className="mono text-xs text-muted-foreground tracking-widest uppercase">
+                  NEXT BET QUEUED
+                </span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-green-glow mono text-xl font-bold">
+                  {formatCurrency(greenBetAmount)}
+                </span>
+                <span className="mono text-xs text-muted-foreground">ON</span>
+                <span className="text-red-glow mono font-bold tracking-widest">
+                  ▼ RED
+                </span>
+                <span className="mono text-xs text-muted-foreground">
+                  ({greenStreak} consecutive green)
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="mt-3 flex items-center gap-2">
             <span className="mono text-xs text-muted-foreground">
@@ -392,13 +449,19 @@ function NextBetPreview({ greenStreak, redStreak, balance }: BetPreviewProps) {
             <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
               <motion.div
                 className="h-full rounded-full"
-                style={{ background: "oklch(0.70 0.22 145)" }}
+                style={{
+                  background: delayActive
+                    ? "oklch(0.85 0.18 85)"
+                    : "oklch(0.70 0.22 145)",
+                }}
                 initial={{ width: "0%" }}
                 animate={{ width: `${Math.min(greenStreak * 15, 95)}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
               />
             </div>
-            <span className="mono text-xs text-candle-green">
+            <span
+              className={`mono text-xs ${delayActive ? "text-candle-yellow" : "text-candle-green"}`}
+            >
               {Math.min(greenStreak * 15, 95)}%
             </span>
           </div>
@@ -415,40 +478,76 @@ function NextBetPreview({ greenStreak, redStreak, balance }: BetPreviewProps) {
             duration: 0.3,
             delay: greenBetAmount !== null ? 0.1 : 0,
           }}
-          className="rounded-lg p-4 border relative overflow-hidden"
+          className={`rounded-lg p-4 border relative overflow-hidden ${delayActive ? "opacity-70" : ""}`}
           style={{
             background: "oklch(var(--card))",
-            borderColor: "oklch(0.62 0.22 22 / 0.4)",
-            boxShadow:
-              "0 0 12px oklch(0.62 0.22 22 / 0.12), 0 4px 16px oklch(0 0 0 / 0.4), inset 0 1px 0 oklch(0.62 0.22 22 / 0.08)",
+            borderColor: delayActive
+              ? "oklch(0.85 0.18 85 / 0.35)"
+              : "oklch(0.62 0.22 22 / 0.4)",
+            boxShadow: delayActive
+              ? "0 0 12px oklch(0.85 0.18 85 / 0.08), 0 4px 16px oklch(0 0 0 / 0.4)"
+              : "0 0 12px oklch(0.62 0.22 22 / 0.12), 0 4px 16px oklch(0 0 0 / 0.4), inset 0 1px 0 oklch(0.62 0.22 22 / 0.08)",
           }}
         >
-          {/* Corner brackets — red */}
-          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-candle-red/80" />
-          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-candle-red/80" />
-          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-candle-red/80" />
-          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-candle-red/80" />
+          {/* Corner brackets — red/yellow depending on delay state */}
+          <div
+            className={`absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-red/80"}`}
+          />
+          <div
+            className={`absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-red/80"}`}
+          />
+          <div
+            className={`absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-red/80"}`}
+          />
+          <div
+            className={`absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 ${delayActive ? "border-candle-yellow/60" : "border-candle-red/80"}`}
+          />
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-candle-yellow" />
-              <span className="mono text-xs text-muted-foreground tracking-widest uppercase">
-                NEXT BET QUEUED
-              </span>
-            </div>
+          {delayActive ? (
+            /* Delayed state */
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-red-glow mono text-xl font-bold">
-                {formatCurrency(redBetAmount)}
-              </span>
-              <span className="mono text-xs text-muted-foreground">ON</span>
-              <span className="text-green-glow mono font-bold tracking-widest">
-                ▲ GREEN
-              </span>
-              <span className="mono text-xs text-muted-foreground">
-                ({redStreak} consecutive red)
-              </span>
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-candle-yellow ticker-blink" />
+                <span className="mono text-xs text-candle-yellow tracking-widest uppercase">
+                  BET QUEUED · WAITING {delaySecondsLeft}s
+                </span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap opacity-60">
+                <span className="mono text-xl font-bold text-candle-yellow">
+                  {formatCurrency(redBetAmount)}
+                </span>
+                <span className="mono text-xs text-muted-foreground">ON</span>
+                <span className="text-green-glow mono font-bold tracking-widest">
+                  ▲ GREEN
+                </span>
+                <span className="mono text-xs text-muted-foreground">
+                  ({redStreak} consecutive red)
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Normal state */
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-candle-yellow" />
+                <span className="mono text-xs text-muted-foreground tracking-widest uppercase">
+                  NEXT BET QUEUED
+                </span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-red-glow mono text-xl font-bold">
+                  {formatCurrency(redBetAmount)}
+                </span>
+                <span className="mono text-xs text-muted-foreground">ON</span>
+                <span className="text-green-glow mono font-bold tracking-widest">
+                  ▲ GREEN
+                </span>
+                <span className="mono text-xs text-muted-foreground">
+                  ({redStreak} consecutive red)
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="mt-3 flex items-center gap-2">
             <span className="mono text-xs text-muted-foreground">
@@ -457,13 +556,19 @@ function NextBetPreview({ greenStreak, redStreak, balance }: BetPreviewProps) {
             <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
               <motion.div
                 className="h-full rounded-full"
-                style={{ background: "oklch(0.62 0.22 22)" }}
+                style={{
+                  background: delayActive
+                    ? "oklch(0.85 0.18 85)"
+                    : "oklch(0.62 0.22 22)",
+                }}
                 initial={{ width: "0%" }}
                 animate={{ width: `${Math.min(redStreak * 15, 95)}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
               />
             </div>
-            <span className="mono text-xs text-candle-red">
+            <span
+              className={`mono text-xs ${delayActive ? "text-candle-yellow" : "text-candle-red"}`}
+            >
               {Math.min(redStreak * 15, 95)}%
             </span>
           </div>
@@ -676,6 +781,20 @@ function SettingsPanel({
             </p>
           </div>
 
+          {/* 30-second candle delay note */}
+          <div className="rounded border border-candle-yellow/20 bg-candle-yellow/5 px-4 py-3 mb-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="w-3.5 h-3.5 text-candle-yellow flex-shrink-0" />
+              <span className="mono text-xs text-candle-yellow font-semibold tracking-wider uppercase">
+                CANDLE OPEN DELAY
+              </span>
+            </div>
+            <p className="mono text-xs text-muted-foreground">
+              30-second entry delay after each new candle open before bets are
+              placed.
+            </p>
+          </div>
+
           {/* Green streak → Bet RED */}
           <div className="mb-4">
             <div className="mono text-xs text-candle-green tracking-wider mb-2 flex items-center gap-1.5">
@@ -779,6 +898,17 @@ export default function App() {
     );
   });
 
+  // ── 30-second candle-open delay state ───────────────────────────────────────
+  // Tracks when the most-recent candle opened; compared against current time
+  // to gate bet placement for the first 30s of each new 15-min candle.
+  const [newCandleOpenedAt, setNewCandleOpenedAt] = useState<number>(() => {
+    const stored = localStorage.getItem("btcbot_candle_opened_at");
+    return stored ? Number.parseInt(stored, 10) : 0;
+  });
+  const [lastSeenCandleTs, setLastSeenCandleTs] = useState<string>(() => {
+    return localStorage.getItem("btcbot_last_candle_ts") ?? "";
+  });
+
   // Stop-loss state — persisted to localStorage
   const [stopLossTriggered, setStopLossTriggered] = useState<boolean>(() => {
     return localStorage.getItem("btcbot_stop_loss_triggered") === "true";
@@ -807,6 +937,22 @@ export default function App() {
   const streak = Number(streakQuery.data ?? 0n);
   // Candles from getCandles() are ordered most-recent first (index 0 = latest)
   const redStreak = computeRedStreak(candles);
+
+  // Derived candle delay values (computed each render from `now`)
+  // In a real integration, bet placement would be gated by `delayActive` before
+  // submitting any order to Kalshi — the bot should NOT place a bet while this
+  // flag is true, regardless of streak conditions being met.
+  const delayActive =
+    config?.enabled === true && now < newCandleOpenedAt + CANDLE_OPEN_DELAY_MS;
+  const delayMsLeft = Math.max(
+    0,
+    newCandleOpenedAt + CANDLE_OPEN_DELAY_MS - now,
+  );
+  const delaySecondsLeft = Math.ceil(delayMsLeft / 1000);
+  // Progress 0→100 as the 30s elapses (used for the depleting progress bar)
+  const delayProgressPct = delayActive
+    ? ((CANDLE_OPEN_DELAY_MS - delayMsLeft) / CANDLE_OPEN_DELAY_MS) * 100
+    : 100;
 
   const isLoading =
     configQuery.isLoading ||
@@ -849,6 +995,23 @@ export default function App() {
     const interval = setInterval(handleRefresh, 30_000);
     return () => clearInterval(interval);
   }, [handleRefresh]);
+
+  // Detect new candle opens: when the most-recent candle's timestamp changes,
+  // record the current wall-clock time so the 30s delay window starts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — only run when candles update
+  useEffect(() => {
+    if (candles.length === 0) return;
+    // Use the first candle (most-recent) since backend returns newest-first
+    const latestTs = candles[0].timestamp.toString();
+    if (latestTs !== lastSeenCandleTs) {
+      const openedAt = Date.now();
+      setNewCandleOpenedAt(openedAt);
+      setLastSeenCandleTs(latestTs);
+      localStorage.setItem("btcbot_candle_opened_at", openedAt.toString());
+      localStorage.setItem("btcbot_last_candle_ts", latestTs);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles]);
 
   // Computed stats
   const resolvedBets = bets.filter((b) => b.resolved);
@@ -1261,6 +1424,68 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
+                  {/* 30-Second Candle Open Delay banner */}
+                  <AnimatePresence>
+                    {delayActive && (
+                      <motion.div
+                        key="candle-delay-banner"
+                        initial={{ opacity: 0, y: -16 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -16 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        className="relative rounded-lg border border-candle-yellow/40 overflow-hidden"
+                        style={{
+                          background: "oklch(0.85 0.18 85 / 0.06)",
+                          boxShadow:
+                            "0 0 16px oklch(0.85 0.18 85 / 0.10), inset 0 1px 0 oklch(0.85 0.18 85 / 0.08)",
+                        }}
+                        data-ocid="candle_delay.panel"
+                      >
+                        {/* Depleting progress bar at the very top */}
+                        <div className="h-0.5 bg-candle-yellow/10 w-full">
+                          <motion.div
+                            className="h-full"
+                            style={{
+                              background: "oklch(0.85 0.18 85)",
+                              width: `${100 - delayProgressPct}%`,
+                              transformOrigin: "left",
+                            }}
+                            animate={{ width: `${100 - delayProgressPct}%` }}
+                            transition={{ duration: 0.5, ease: "linear" }}
+                          />
+                        </div>
+                        <div className="px-4 py-3 flex items-center gap-3">
+                          <Clock className="w-4 h-4 text-candle-yellow flex-shrink-0 ticker-blink" />
+                          <div className="flex-1 min-w-0">
+                            <p className="mono text-sm text-candle-yellow font-bold tracking-wide">
+                              CANDLE OPEN DELAY —{" "}
+                              <span className="font-normal text-candle-yellow/80">
+                                Betting resumes in{" "}
+                                <span className="font-bold text-candle-yellow">
+                                  {delaySecondsLeft}s
+                                </span>
+                                . New 15-min candle just opened.
+                              </span>
+                            </p>
+                          </div>
+                          {/* Visual countdown ring */}
+                          <div className="flex-shrink-0 mono text-lg font-bold text-candle-yellow w-10 text-right tabular-nums">
+                            {delaySecondsLeft}s
+                          </div>
+                        </div>
+                        {/* Full-width progress bar at the bottom */}
+                        <div className="h-1 bg-secondary/50 w-full">
+                          <motion.div
+                            className="h-full rounded-r-full"
+                            style={{ background: "oklch(0.85 0.18 85 / 0.7)" }}
+                            animate={{ width: `${100 - delayProgressPct}%` }}
+                            transition={{ duration: 0.5, ease: "linear" }}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   {/* 7-Candle Streak Limit banner */}
                   <AnimatePresence>
                     {streakLimitTriggered && (
@@ -1609,6 +1834,8 @@ export default function App() {
                         greenStreak={streak}
                         redStreak={redStreak}
                         balance={config.balance}
+                        delayActive={delayActive}
+                        delaySecondsLeft={delaySecondsLeft}
                       />
                     )}
                   </AnimatePresence>

@@ -1402,9 +1402,22 @@ export default function SimulationMode() {
                         className="border-border hover:bg-secondary/30 transition-colors"
                       >
                         <TableCell className="py-1.5 px-2">
-                          <span className="mono text-xs text-muted-foreground">
-                            #{bet.candleIndex}
-                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="mono text-xs text-muted-foreground">
+                              #{bet.candleIndex}
+                            </span>
+                            {/* 30s delay annotation — all sim bets are logically delayed from candle open */}
+                            <span
+                              className="inline-flex items-center px-1 py-0 rounded text-candle-yellow/70 border border-candle-yellow/25 bg-candle-yellow/5"
+                              style={{
+                                fontSize: "9px",
+                                fontFamily: "monospace",
+                                lineHeight: "1.4",
+                              }}
+                            >
+                              +30s
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           {bet.streakType === "green" ? (
@@ -1492,7 +1505,7 @@ export default function SimulationMode() {
             <span className="text-candle-green/60">●</span>
             <span>
               STRATEGY: 3-6 CANDLE MEAN REVERSION · DYNAMIC BET SIZING ·
-              7-CANDLE CAP
+              7-CANDLE CAP · 30s ENTRY DELAY
             </span>
           </div>
         </motion.div>
