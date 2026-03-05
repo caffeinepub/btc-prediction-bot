@@ -87,19 +87,28 @@ function computeBetMultiplier(balance: number): number {
   return 1 + extra * 0.1;
 }
 
-/** Session loss limit: $5,000 base + 0.015% of balance per $1,000 in account */
-function computeSessionLossLimit(balance: number): number {
-  const increments = Math.floor(balance / 1000);
-  return 5000 + increments * balance * 0.00015;
-}
+/** Fixed session loss limit: $5,000 */
+const SESSION_LOSS_LIMIT = 5000;
 
-const MAX_STREAK_LIMIT = 7;
+const MAX_STREAK_LIMIT = 8;
+const HIGH_BALANCE_BET_THRESHOLD = 250_000;
 
 function getNextBetAmount(streak: number, balance: number): number | null {
-  if (streak < 3 || streak > 6) return null;
+  if (streak < 4 || streak > 8) return null;
+  // Candle 7 ($2,700) and candle 8 ($8,500) only active with balance > $250,000
+  if ((streak === 7 || streak === 8) && balance <= HIGH_BALANCE_BET_THRESHOLD)
+    return null;
   const mult = computeBetMultiplier(balance);
   const base =
-    streak === 3 ? 100 : streak === 4 ? 300 : streak === 5 ? 900 : 2700;
+    streak === 4
+      ? 100
+      : streak === 5
+        ? 300
+        : streak === 6
+          ? 900
+          : streak === 7
+            ? 2700
+            : 8500;
   return Math.round(base * mult);
 }
 
@@ -671,7 +680,7 @@ function SettingsPanel({
             </p>
           </div>
 
-          {/* Dynamic Session Loss Limit (info card — non-editable) */}
+          {/* Fixed Session Loss Limit (info card — non-editable) */}
           <div className="space-y-2">
             <Label className="mono text-xs text-muted-foreground tracking-widest uppercase">
               Session Loss Limit
@@ -679,23 +688,15 @@ function SettingsPanel({
             <div className="rounded border border-candle-red/20 bg-candle-red/5 px-4 py-3 space-y-1">
               <div className="flex items-center justify-between">
                 <span className="mono text-xs text-muted-foreground">
-                  Current limit
+                  Loss limit
                 </span>
                 <span className="mono text-sm font-bold text-candle-red">
-                  {formatCurrency(computeSessionLossLimit(currentBalance))}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="mono text-xs text-muted-foreground">
-                  Formula
-                </span>
-                <span className="mono text-xs text-muted-foreground">
-                  $5,000 base + 0.015% per $1K
+                  {formatCurrency(SESSION_LOSS_LIMIT)}
                 </span>
               </div>
             </div>
             <p className="mono text-xs text-muted-foreground">
-              Auto-computed · triggers a 6-hour trading hold
+              Fixed · triggers a 6-hour trading hold
             </p>
           </div>
         </div>
@@ -772,12 +773,12 @@ function SettingsPanel({
               {computeBetMultiplier(currentBalance).toFixed(2)}x
             </p>
             <p className="mono text-xs text-muted-foreground">
-              Session loss limit: $5,000 base + 0.015% per $1,000 in account.
-              Current: {formatCurrency(computeSessionLossLimit(currentBalance))}
+              Session loss limit: {formatCurrency(SESSION_LOSS_LIMIT)} fixed ·
+              triggers a 6-hour hold.
             </p>
             <p className="mono text-xs text-candle-yellow/80 border-t border-candle-yellow/20 pt-1.5 mt-1">
-              ⚠ Bets are disabled and bot auto-stops after {MAX_STREAK_LIMIT}{" "}
-              consecutive candles in either direction.
+              Bot auto-stops if streak continues past {MAX_STREAK_LIMIT}{" "}
+              candles. Candles 7 &amp; 8 require &gt;$250K balance.
             </p>
           </div>
 
@@ -801,26 +802,50 @@ function SettingsPanel({
               <span>▲</span>
               <span>CONSECUTIVE GREEN → BET RED</span>
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { streak: 3, base: 100 },
-                { streak: 4, base: 300 },
-                { streak: 5, base: 900 },
-                { streak: 6, base: 2700 },
-              ].map(({ streak, base }) => (
+                { streak: 4, base: 100, locked: false },
+                { streak: 5, base: 300, locked: false },
+                { streak: 6, base: 900, locked: false },
+                {
+                  streak: 7,
+                  base: 2700,
+                  locked: currentBalance <= HIGH_BALANCE_BET_THRESHOLD,
+                },
+                {
+                  streak: 8,
+                  base: 8500,
+                  locked: currentBalance <= HIGH_BALANCE_BET_THRESHOLD,
+                },
+              ].map(({ streak, base, locked }) => (
                 <div
                   key={streak}
-                  className="bg-candle-green/5 rounded border border-candle-green/20 p-2 text-center"
+                  className={`rounded border p-2 text-center ${locked ? "bg-muted/10 border-muted/30 opacity-60" : "bg-candle-green/5 border-candle-green/20"}`}
                 >
                   <div className="mono text-xs text-muted-foreground mb-1">
                     {streak} 🟩 streak
                   </div>
-                  <div className="mono text-sm font-bold text-candle-green">
-                    {formatCurrency(
-                      Math.round(base * computeBetMultiplier(currentBalance)),
-                    )}
-                  </div>
-                  <div className="mono text-xs text-candle-red">▼ RED</div>
+                  {locked ? (
+                    <>
+                      <div className="mono text-sm font-bold text-muted-foreground">
+                        LOCKED
+                      </div>
+                      <div className="mono text-xs text-candle-yellow/70">
+                        ≥$250K
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mono text-sm font-bold text-candle-green">
+                        {formatCurrency(
+                          Math.round(
+                            base * computeBetMultiplier(currentBalance),
+                          ),
+                        )}
+                      </div>
+                      <div className="mono text-xs text-candle-red">▼ RED</div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -832,26 +857,52 @@ function SettingsPanel({
               <span>▼</span>
               <span>CONSECUTIVE RED → BET GREEN</span>
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { streak: 3, base: 100 },
-                { streak: 4, base: 300 },
-                { streak: 5, base: 900 },
-                { streak: 6, base: 2700 },
-              ].map(({ streak, base }) => (
+                { streak: 4, base: 100, locked: false },
+                { streak: 5, base: 300, locked: false },
+                { streak: 6, base: 900, locked: false },
+                {
+                  streak: 7,
+                  base: 2700,
+                  locked: currentBalance <= HIGH_BALANCE_BET_THRESHOLD,
+                },
+                {
+                  streak: 8,
+                  base: 8500,
+                  locked: currentBalance <= HIGH_BALANCE_BET_THRESHOLD,
+                },
+              ].map(({ streak, base, locked }) => (
                 <div
                   key={streak}
-                  className="bg-candle-red/5 rounded border border-candle-red/20 p-2 text-center"
+                  className={`rounded border p-2 text-center ${locked ? "bg-muted/10 border-muted/30 opacity-60" : "bg-candle-red/5 border-candle-red/20"}`}
                 >
                   <div className="mono text-xs text-muted-foreground mb-1">
                     {streak} 🟥 streak
                   </div>
-                  <div className="mono text-sm font-bold text-candle-red">
-                    {formatCurrency(
-                      Math.round(base * computeBetMultiplier(currentBalance)),
-                    )}
-                  </div>
-                  <div className="mono text-xs text-candle-green">▲ GREEN</div>
+                  {locked ? (
+                    <>
+                      <div className="mono text-sm font-bold text-muted-foreground">
+                        LOCKED
+                      </div>
+                      <div className="mono text-xs text-candle-yellow/70">
+                        ≥$250K
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mono text-sm font-bold text-candle-red">
+                        {formatCurrency(
+                          Math.round(
+                            base * computeBetMultiplier(currentBalance),
+                          ),
+                        )}
+                      </div>
+                      <div className="mono text-xs text-candle-green">
+                        ▲ GREEN
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -872,7 +923,7 @@ export default function App() {
   const [_lastUpdated, setLastUpdated] = useState(Date.now());
   const [secondsAgo, setSecondsAgo] = useState(0);
 
-  // 7-candle streak disable state — persisted to localStorage
+  // 8-candle streak disable state — persisted to localStorage
   const [streakLimitTriggered, setStreakLimitTriggered] = useState<boolean>(
     () => {
       return localStorage.getItem("btcbot_streak_limit_triggered") === "true";
@@ -1023,15 +1074,14 @@ export default function App() {
     .sort((a, b) => Number(b.timestamp - a.timestamp))
     .slice(0, 20);
 
-  // Stop-loss effect: auto-disable if session losses exceed dynamic limit
+  // Stop-loss effect: auto-disable if session losses exceed $5,000
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — only react to balance/enabled/sessionStartBalance changes
   useEffect(() => {
     if (!config) return;
     if (
       config.enabled &&
       sessionStartBalance > 0 &&
-      sessionStartBalance - config.balance >=
-        computeSessionLossLimit(sessionStartBalance)
+      sessionStartBalance - config.balance >= SESSION_LOSS_LIMIT
     ) {
       disableBot.mutateAsync().catch(() => {});
       setStopLossTriggered(true);
@@ -1040,29 +1090,30 @@ export default function App() {
       setCooldownUntil(until);
       localStorage.setItem("btcbot_stop_loss_cooldown_until", until.toString());
       toast.error(
-        `STOP LOSS TRIGGERED — Session losses exceeded ${formatCurrency(computeSessionLossLimit(sessionStartBalance))}`,
+        `STOP LOSS TRIGGERED — Session losses exceeded ${formatCurrency(SESSION_LOSS_LIMIT)}`,
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?.balance, config?.enabled, sessionStartBalance]);
 
-  // 7-candle streak auto-disable effect
+  // 6-candle streak auto-disable effect (fires when streak goes BEYOND 6, i.e. 7+)
+  // At streak=6 the $900 bet is placed; disable triggers only if the streak continues past 6.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   useEffect(() => {
     if (!config?.enabled) return;
     const triggeredStreak =
-      streak >= MAX_STREAK_LIMIT
+      streak > MAX_STREAK_LIMIT
         ? streak
-        : redStreak >= MAX_STREAK_LIMIT
+        : redStreak > MAX_STREAK_LIMIT
           ? redStreak
           : 0;
     const streakColor =
-      streak >= MAX_STREAK_LIMIT
+      streak > MAX_STREAK_LIMIT
         ? "green"
-        : redStreak >= MAX_STREAK_LIMIT
+        : redStreak > MAX_STREAK_LIMIT
           ? "red"
           : null;
-    if (streakColor && triggeredStreak >= MAX_STREAK_LIMIT) {
+    if (streakColor && triggeredStreak > MAX_STREAK_LIMIT) {
       disableBot.mutateAsync().catch(() => {});
       const info = `${triggeredStreak} consecutive ${streakColor.toUpperCase()} candles`;
       setStreakLimitTriggered(true);
@@ -1075,12 +1126,12 @@ export default function App() {
       localStorage.setItem("btcbot_waiting_for_restart", "true");
       localStorage.setItem("btcbot_restart_progress", "0");
       localStorage.setItem("btcbot_streak_limit_color", streakColor);
-      toast.error(`BOT DISABLED — ${info} exceeded the 7-candle limit`);
+      toast.error(`BOT DISABLED — ${info} exceeded the 8-candle limit`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streak, redStreak, config?.enabled]);
 
-  // Auto-restart watch: after 7-candle cap, count opposite-color candles toward restart
+  // Auto-restart watch: after 8-candle cap, count opposite-color candles toward restart
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   useEffect(() => {
     if (!waitingForRestart || !streakLimitColor || candles.length === 0) return;
@@ -1390,10 +1441,7 @@ export default function App() {
                           STOP LOSS TRIGGERED —{" "}
                           <span className="font-normal text-candle-red/80">
                             Bot auto-disabled. Session losses exceeded{" "}
-                            {formatCurrency(
-                              computeSessionLossLimit(sessionStartBalance),
-                            )}
-                            .
+                            {formatCurrency(SESSION_LOSS_LIMIT)}.
                             {cooldownActive && (
                               <>
                                 {" "}
@@ -1518,12 +1566,12 @@ export default function App() {
                                 </>
                               ) : (
                                 <>
-                                  7-CANDLE STREAK LIMIT —{" "}
+                                  8-CANDLE STREAK LIMIT —{" "}
                                   <span className="font-normal text-candle-yellow/80">
                                     Bot auto-disabled.{" "}
                                     {streakLimitInfo
-                                      ? `${streakLimitInfo} exceeded the 7-candle maximum.`
-                                      : "Consecutive candle streak exceeded 7."}{" "}
+                                      ? `${streakLimitInfo} exceeded the 8-candle maximum.`
+                                      : "Consecutive candle streak exceeded 8."}{" "}
                                     Re-enable the bot when conditions reset.
                                   </span>
                                 </>
@@ -1660,10 +1708,7 @@ export default function App() {
                             {computeBetMultiplier(config.balance).toFixed(2)}x
                           </div>
                           <div className="text-muted-foreground">
-                            Session limit:{" "}
-                            {formatCurrency(
-                              computeSessionLossLimit(config.balance),
-                            )}
+                            Stop loss: {formatCurrency(SESSION_LOSS_LIMIT)}
                           </div>
                           {cooldownActive && (
                             <div className="text-candle-red/70">
@@ -1679,38 +1724,59 @@ export default function App() {
                       label="Green Streak"
                       icon={<BarChart2 className="w-4 h-4" />}
                       variant={
-                        streak >= MAX_STREAK_LIMIT
+                        streak > MAX_STREAK_LIMIT
                           ? "yellow"
-                          : streak >= 3
-                            ? "green"
-                            : "default"
+                          : streak === MAX_STREAK_LIMIT
+                            ? "yellow"
+                            : streak >= 4
+                              ? "green"
+                              : "default"
                       }
                       delay={0.05}
                       value={
                         <span
                           className={
-                            streak >= MAX_STREAK_LIMIT
+                            streak > MAX_STREAK_LIMIT
                               ? "text-candle-yellow"
-                              : streak >= 3
-                                ? "text-green-glow"
-                                : ""
+                              : streak === MAX_STREAK_LIMIT
+                                ? "text-candle-yellow"
+                                : streak >= 4
+                                  ? "text-green-glow"
+                                  : ""
                           }
                         >
-                          {streak >= MAX_STREAK_LIMIT && (
+                          {streak > MAX_STREAK_LIMIT && (
                             <span className="mr-1">⚠</span>
                           )}
-                          {streak >= 3 && streak < MAX_STREAK_LIMIT && (
+                          {streak === MAX_STREAK_LIMIT && (
+                            <span className="mr-1">⚡</span>
+                          )}
+                          {streak >= 4 && streak < MAX_STREAK_LIMIT && (
                             <span className="flame-bounce mr-1">🔥</span>
                           )}
                           {streak}
                         </span>
                       }
                       sub={
-                        streak >= MAX_STREAK_LIMIT ? (
+                        streak > MAX_STREAK_LIMIT ? (
                           <span className="text-candle-yellow">
                             LIMIT REACHED — bets off
                           </span>
-                        ) : streak >= 3 ? (
+                        ) : streak === 8 ? (
+                          <span className="text-candle-yellow">
+                            MAX BET — $8,500 queued
+                          </span>
+                        ) : streak === 7 ? (
+                          <span className="text-candle-yellow">
+                            {config.balance > HIGH_BALANCE_BET_THRESHOLD
+                              ? "$2,700 queued"
+                              : "7th bet locked — need $250K"}
+                          </span>
+                        ) : streak === 6 ? (
+                          <span className="text-candle-yellow">
+                            $900 queued
+                          </span>
+                        ) : streak >= 4 ? (
                           <span className="text-candle-green">
                             {streak} consecutive ▲
                           </span>
@@ -1727,38 +1793,59 @@ export default function App() {
                       label="Red Streak"
                       icon={<TrendingDown className="w-4 h-4" />}
                       variant={
-                        redStreak >= MAX_STREAK_LIMIT
+                        redStreak > MAX_STREAK_LIMIT
                           ? "yellow"
-                          : redStreak >= 3
-                            ? "red"
-                            : "default"
+                          : redStreak === MAX_STREAK_LIMIT
+                            ? "yellow"
+                            : redStreak >= 4
+                              ? "red"
+                              : "default"
                       }
                       delay={0.1}
                       value={
                         <span
                           className={
-                            redStreak >= MAX_STREAK_LIMIT
+                            redStreak > MAX_STREAK_LIMIT
                               ? "text-candle-yellow"
-                              : redStreak >= 3
-                                ? "text-red-glow"
-                                : ""
+                              : redStreak === MAX_STREAK_LIMIT
+                                ? "text-candle-yellow"
+                                : redStreak >= 4
+                                  ? "text-red-glow"
+                                  : ""
                           }
                         >
-                          {redStreak >= MAX_STREAK_LIMIT && (
+                          {redStreak > MAX_STREAK_LIMIT && (
                             <span className="mr-1">⚠</span>
                           )}
-                          {redStreak >= 3 && redStreak < MAX_STREAK_LIMIT && (
+                          {redStreak === MAX_STREAK_LIMIT && (
+                            <span className="mr-1">⚡</span>
+                          )}
+                          {redStreak >= 4 && redStreak < MAX_STREAK_LIMIT && (
                             <span className="flame-bounce mr-1">🔻</span>
                           )}
                           {redStreak}
                         </span>
                       }
                       sub={
-                        redStreak >= MAX_STREAK_LIMIT ? (
+                        redStreak > MAX_STREAK_LIMIT ? (
                           <span className="text-candle-yellow">
                             LIMIT REACHED — bets off
                           </span>
-                        ) : redStreak >= 3 ? (
+                        ) : redStreak === 8 ? (
+                          <span className="text-candle-yellow">
+                            MAX BET — $8,500 queued
+                          </span>
+                        ) : redStreak === 7 ? (
+                          <span className="text-candle-yellow">
+                            {config.balance > HIGH_BALANCE_BET_THRESHOLD
+                              ? "$2,700 queued"
+                              : "7th bet locked — need $250K"}
+                          </span>
+                        ) : redStreak === 6 ? (
+                          <span className="text-candle-yellow">
+                            $900 queued
+                          </span>
+                        ) : redStreak >= 4 ? (
                           <span className="text-candle-red">
                             {redStreak} consecutive ▼
                           </span>
@@ -1828,7 +1915,7 @@ export default function App() {
 
                   {/* Next Bet Preview */}
                   <AnimatePresence>
-                    {(streak >= 3 || redStreak >= 3) && (
+                    {(streak >= 4 || redStreak >= 4) && (
                       <NextBetPreview
                         key="next-bet"
                         greenStreak={streak}
@@ -2086,8 +2173,8 @@ export default function App() {
       <footer className="border-t border-border mt-8 py-4">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between flex-wrap gap-2">
           <div className="mono text-xs text-muted-foreground">
-            <span className="text-candle-green/60">●</span> STRATEGY: 3-6 CANDLE
-            MEAN REVERSION (GREEN↑ &amp; RED↓) · 7-CANDLE CAP · BTC/USD 15M
+            <span className="text-candle-green/60">●</span> STRATEGY: 4-8 CANDLE
+            MEAN REVERSION (GREEN↑ &amp; RED↓) · 8-CANDLE MAX BET · BTC/USD 15M
           </div>
           <div className="mono text-xs text-muted-foreground">
             © {new Date().getFullYear()}. Built with{" "}

@@ -86,19 +86,28 @@ function computeBetMultiplier(balance: number): number {
   return 1 + extra * 0.1;
 }
 
-/** Session loss limit: $5,000 base + 0.015% of balance per $1,000 in account */
-function computeSessionLossLimit(balance: number): number {
-  const increments = Math.floor(balance / 1000);
-  return 5000 + increments * balance * 0.00015;
-}
+/** Fixed session loss limit: $5,000 */
+const SESSION_LOSS_LIMIT = 5000;
 
-const MAX_STREAK_LIMIT = 7;
+const MAX_STREAK_LIMIT = 8;
+const HIGH_BALANCE_BET_THRESHOLD = 250_000;
 
 function getBetAmount(streak: number, balance: number): number | null {
-  if (streak < 3 || streak > 6) return null;
+  if (streak < 4 || streak > 8) return null;
+  // Candle 7 ($2,700) and candle 8 ($8,500) only active with balance > $250,000
+  if ((streak === 7 || streak === 8) && balance <= HIGH_BALANCE_BET_THRESHOLD)
+    return null;
   const mult = computeBetMultiplier(balance);
   const base =
-    streak === 3 ? 100 : streak === 4 ? 300 : streak === 5 ? 900 : 2700;
+    streak === 4
+      ? 100
+      : streak === 5
+        ? 300
+        : streak === 6
+          ? 900
+          : streak === 7
+            ? 2700
+            : 8500;
   return Math.round(base * mult);
 }
 
@@ -402,14 +411,14 @@ function SummaryPanel({
           {reason === "stop-loss"
             ? "⚠ SIMULATION HALTED"
             : reason === "streak-limit"
-              ? "⚠ SIMULATION HALTED — 7-CANDLE LIMIT"
+              ? "⚠ SIMULATION HALTED — 6-CANDLE LIMIT"
               : "✓ SIMULATION COMPLETE"}
         </div>
         <div className="mono text-xs text-muted-foreground">
           {reason === "stop-loss"
             ? "Stop-loss triggered — session losses exceeded dynamic limit"
             : reason === "streak-limit"
-              ? `${MAX_STREAK_LIMIT} consecutive candles reached — bot auto-disabled at candle #${stats.currentCandle}`
+              ? `${MAX_STREAK_LIMIT} consecutive candles reached — bot paused at candle #${stats.currentCandle}`
               : `All ${totalCandles} candles (${timeframeLabel}) processed`}
         </div>
       </div>
@@ -641,7 +650,7 @@ export default function SimulationMode() {
       streakType: "green" | "red",
       betDirection: "red" | "green",
     ) => {
-      if (streak >= 3) {
+      if (streak >= 4) {
         const milestone = Math.min(streak, 6);
         const key = `${streakType}-${idx}-${milestone}`;
         if (
@@ -671,11 +680,8 @@ export default function SimulationMode() {
       checkStreakBet(sim.redStreak, "red", "green");
     }
 
-    // Check stop-loss using dynamic session loss limit
-    if (
-      sim.balance <
-      currentStartingBalance - computeSessionLossLimit(currentStartingBalance)
-    ) {
+    // Check stop-loss using fixed $5,000 session loss limit
+    if (sim.balance < currentStartingBalance - SESSION_LOSS_LIMIT) {
       const finalStats: SimStats = {
         balance: sim.balance,
         pnl: sim.balance - currentStartingBalance,
@@ -696,15 +702,15 @@ export default function SimulationMode() {
       return;
     }
 
-    // Check 7-candle streak limit — enter restart-watch mode (don't halt immediately)
+    // Check 8-candle streak limit — enter restart-watch mode after bets at streak=8 are placed
     if (
-      (sim.greenStreak >= MAX_STREAK_LIMIT ||
-        sim.redStreak >= MAX_STREAK_LIMIT) &&
+      (sim.greenStreak > MAX_STREAK_LIMIT ||
+        sim.redStreak > MAX_STREAK_LIMIT) &&
       !sim.streakLimitPaused
     ) {
       sim.streakLimitPaused = true;
       sim.streakPausedColor =
-        sim.greenStreak >= MAX_STREAK_LIMIT ? "green" : "red";
+        sim.greenStreak > MAX_STREAK_LIMIT ? "green" : "red";
       sim.restartWatchCount = 0;
       setSimRestartWatch({
         active: true,
@@ -1504,8 +1510,8 @@ export default function SimulationMode() {
           <div className="inline-flex items-center gap-2 text-xs mono text-muted-foreground border border-border rounded px-3 py-1.5">
             <span className="text-candle-green/60">●</span>
             <span>
-              STRATEGY: 3-6 CANDLE MEAN REVERSION · DYNAMIC BET SIZING ·
-              7-CANDLE CAP · 30s ENTRY DELAY
+              STRATEGY: 4-8 CANDLE MEAN REVERSION · DYNAMIC BET SIZING ·
+              8-CANDLE CAP · 30s ENTRY DELAY
             </span>
           </div>
         </motion.div>
