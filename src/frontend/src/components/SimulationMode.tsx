@@ -86,8 +86,18 @@ function computeBetMultiplier(balance: number): number {
   return 1 + extra * 0.1;
 }
 
-/** Fixed session loss limit: $5,000 */
-const SESSION_LOSS_LIMIT = 5000;
+/** Base session loss limit: $5,000 */
+const BASE_SESSION_LOSS_LIMIT = 5000;
+
+/**
+ * Dynamic session loss limit:
+ * $5,000 base + (balance / 1000) × (0.018% of balance) per $1,000 in account
+ */
+function computeDynamicStopLoss(balance: number): number {
+  const increments = balance / 1000;
+  const perIncrement = balance * 0.00018;
+  return BASE_SESSION_LOSS_LIMIT + increments * perIncrement;
+}
 
 const MAX_STREAK_LIMIT = 8;
 const HIGH_BALANCE_BET_THRESHOLD = 250_000;
@@ -416,7 +426,7 @@ function SummaryPanel({
         </div>
         <div className="mono text-xs text-muted-foreground">
           {reason === "stop-loss"
-            ? "Stop-loss triggered — session losses exceeded dynamic limit"
+            ? "Stop-loss triggered — session losses exceeded the dynamic limit (0.018% per $1K)"
             : reason === "streak-limit"
               ? `${MAX_STREAK_LIMIT} consecutive candles reached — bot paused at candle #${stats.currentCandle}`
               : `All ${totalCandles} candles (${timeframeLabel}) processed`}
@@ -680,8 +690,9 @@ export default function SimulationMode() {
       checkStreakBet(sim.redStreak, "red", "green");
     }
 
-    // Check stop-loss using fixed $5,000 session loss limit
-    if (sim.balance < currentStartingBalance - SESSION_LOSS_LIMIT) {
+    // Check stop-loss using dynamic limit (0.018% of balance per $1K)
+    const dynamicLimit = computeDynamicStopLoss(currentStartingBalance);
+    if (sim.balance < currentStartingBalance - dynamicLimit) {
       const finalStats: SimStats = {
         balance: sim.balance,
         pnl: sim.balance - currentStartingBalance,
@@ -1139,7 +1150,7 @@ export default function SimulationMode() {
             )}
           </AnimatePresence>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             <SimStatCard
               label="Balance"
               icon={<DollarSign className="w-3.5 h-3.5" />}
@@ -1191,6 +1202,26 @@ export default function SimulationMode() {
               sub={
                 <span className="text-muted-foreground">
                   +10% / $1K &gt; $10K
+                </span>
+              }
+            />
+            <SimStatCard
+              label="Stop Loss"
+              icon={<ShieldOff className="w-3.5 h-3.5" />}
+              variant="red"
+              value={
+                <span className="text-candle-red">
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: "USD",
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                  }).format(computeDynamicStopLoss(stats.balance))}
+                </span>
+              }
+              sub={
+                <span className="text-muted-foreground">
+                  0.018% / $1K dynamic
                 </span>
               }
             />

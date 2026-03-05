@@ -87,8 +87,19 @@ function computeBetMultiplier(balance: number): number {
   return 1 + extra * 0.1;
 }
 
-/** Fixed session loss limit: $5,000 */
-const SESSION_LOSS_LIMIT = 5000;
+/** Base session loss limit: $5,000 */
+const BASE_SESSION_LOSS_LIMIT = 5000;
+
+/**
+ * Dynamic session loss limit:
+ * $5,000 base + (balance / 1000) × (0.018% of balance) per $1,000 in account
+ * e.g. at $100K: $5,000 + 100 × $18 = $6,800
+ */
+function computeDynamicStopLoss(balance: number): number {
+  const increments = balance / 1000;
+  const perIncrement = balance * 0.00018;
+  return BASE_SESSION_LOSS_LIMIT + increments * perIncrement;
+}
 
 const MAX_STREAK_LIMIT = 8;
 const HIGH_BALANCE_BET_THRESHOLD = 250_000;
@@ -593,10 +604,12 @@ function SettingsPanel({
   currentBalance,
   cooldownActive,
   onClearCooldown,
+  stopLossLimit,
 }: {
   currentBalance: number;
   cooldownActive: boolean;
   onClearCooldown: () => void;
+  stopLossLimit: number;
 }) {
   const [balanceInput, setBalanceInput] = useState(currentBalance.toString());
   const setBalance = useSetStartingBalance();
@@ -680,23 +693,20 @@ function SettingsPanel({
             </p>
           </div>
 
-          {/* Fixed Session Loss Limit (info card — non-editable) */}
+          {/* Dynamic Session Loss Limit (read-only display) */}
           <div className="space-y-2">
             <Label className="mono text-xs text-muted-foreground tracking-widest uppercase">
-              Session Loss Limit
+              Dynamic Stop-Loss (USD)
             </Label>
-            <div className="rounded border border-candle-red/20 bg-candle-red/5 px-4 py-3 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="mono text-xs text-muted-foreground">
-                  Loss limit
-                </span>
-                <span className="mono text-sm font-bold text-candle-red">
-                  {formatCurrency(SESSION_LOSS_LIMIT)}
-                </span>
-              </div>
+            <div className="flex items-center gap-2 rounded border border-candle-red/20 bg-candle-red/5 px-3 py-2">
+              <DollarSign className="w-3.5 h-3.5 text-candle-red/70 flex-shrink-0" />
+              <span className="mono text-sm font-bold text-candle-red">
+                {formatCurrency(stopLossLimit)}
+              </span>
             </div>
             <p className="mono text-xs text-muted-foreground">
-              Fixed · triggers a 6-hour trading hold
+              $5,000 base + 0.018% of balance × every $1,000 in account.
+              Auto-adjusts as balance changes.
             </p>
           </div>
         </div>
@@ -773,8 +783,8 @@ function SettingsPanel({
               {computeBetMultiplier(currentBalance).toFixed(2)}x
             </p>
             <p className="mono text-xs text-muted-foreground">
-              Session loss limit: {formatCurrency(SESSION_LOSS_LIMIT)} fixed ·
-              triggers a 6-hour hold.
+              Dynamic stop-loss: {formatCurrency(stopLossLimit)} ($5K base +
+              0.018% of balance × per $1K) · triggers a 6-hour hold.
             </p>
             <p className="mono text-xs text-candle-yellow/80 border-t border-candle-yellow/20 pt-1.5 mt-1">
               Bot auto-stops if streak continues past {MAX_STREAK_LIMIT}{" "}
@@ -983,6 +993,13 @@ export default function App() {
   const refreshAll = useRefreshAll();
 
   const config = configQuery.data;
+
+  // Dynamic session loss limit — computed from current balance (0.018% per $1K)
+  // Falls back to BASE_SESSION_LOSS_LIMIT when no config is loaded yet
+  const sessionLossLimit = config
+    ? computeDynamicStopLoss(config.balance)
+    : BASE_SESSION_LOSS_LIMIT;
+
   const bets = betsQuery.data ?? [];
   const candles = candlesQuery.data ?? [];
   const streak = Number(streakQuery.data ?? 0n);
@@ -1081,7 +1098,7 @@ export default function App() {
     if (
       config.enabled &&
       sessionStartBalance > 0 &&
-      sessionStartBalance - config.balance >= SESSION_LOSS_LIMIT
+      sessionStartBalance - config.balance >= sessionLossLimit
     ) {
       disableBot.mutateAsync().catch(() => {});
       setStopLossTriggered(true);
@@ -1090,11 +1107,11 @@ export default function App() {
       setCooldownUntil(until);
       localStorage.setItem("btcbot_stop_loss_cooldown_until", until.toString());
       toast.error(
-        `STOP LOSS TRIGGERED — Session losses exceeded ${formatCurrency(SESSION_LOSS_LIMIT)}`,
+        `STOP LOSS TRIGGERED — Session losses exceeded ${formatCurrency(sessionLossLimit)}`,
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config?.balance, config?.enabled, sessionStartBalance]);
+  }, [config?.balance, config?.enabled, sessionStartBalance, sessionLossLimit]);
 
   // 6-candle streak auto-disable effect (fires when streak goes BEYOND 6, i.e. 7+)
   // At streak=6 the $900 bet is placed; disable triggers only if the streak continues past 6.
@@ -1441,7 +1458,7 @@ export default function App() {
                           STOP LOSS TRIGGERED —{" "}
                           <span className="font-normal text-candle-red/80">
                             Bot auto-disabled. Session losses exceeded{" "}
-                            {formatCurrency(SESSION_LOSS_LIMIT)}.
+                            {formatCurrency(sessionLossLimit)}.
                             {cooldownActive && (
                               <>
                                 {" "}
@@ -1707,8 +1724,11 @@ export default function App() {
                             Multiplier:{" "}
                             {computeBetMultiplier(config.balance).toFixed(2)}x
                           </div>
-                          <div className="text-muted-foreground">
-                            Stop loss: {formatCurrency(SESSION_LOSS_LIMIT)}
+                          <div className="text-candle-red/70">
+                            Stop loss:{" "}
+                            {formatCurrency(
+                              computeDynamicStopLoss(config.balance),
+                            )}
                           </div>
                           {cooldownActive && (
                             <div className="text-candle-red/70">
@@ -2158,6 +2178,7 @@ export default function App() {
                           currentBalance={config.balance}
                           cooldownActive={cooldownActive}
                           onClearCooldown={handleClearCooldown}
+                          stopLossLimit={sessionLossLimit}
                         />
                       )}
                     </AnimatePresence>
